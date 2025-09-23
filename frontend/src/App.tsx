@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useOptimistic, Suspense } from "react";
+import { useState, useRef, useEffect, useOptimistic } from "react";
 import styles from "./App.module.css";
 import LoadingSpinner from "./components/LoadingSpinner";
 import type { Message } from "./components/ChatMessage";
@@ -234,12 +234,8 @@ function App() {
           ))}
         </div>
 
-        {/* 只有加载状态才用 Suspense */}
-        {isLoading && (
-          <Suspense fallback={<div>🤔 Preparing AI response...</div>}>
-            <LoadingSpinner />
-          </Suspense>
-        )}
+        {/* 简单的加载状态 - 不需要 Suspense */}
+        {isLoading && <LoadingSpinner />}
 
         <div ref={messagesEndRef} />
       </div>
