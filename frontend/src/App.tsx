@@ -5,14 +5,21 @@ import type { Message } from "./components/ChatMessage";
 import ChatMessage from "./components/ChatMessage";
 import { loadSessionHistoryAction } from "./service/loadSessionHistoryAction";
 import { sendChatAction, type ChatParams } from "./service/sendChatAction";
+import { flushSync } from "react-dom";
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [optimisticMessages, addOptimisticMessage] = useOptimistic(
     messages,
-    (currentMessages: Message[], newMessage: Message) => [
+    (currentMessages: Message[], newMessage: string) => [
       ...currentMessages,
-      newMessage,
+      {
+        type: "user" as const,
+        content: newMessage,
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        sending: true, // 乐观更新标记
+      },
     ]
   );
 
@@ -71,33 +78,42 @@ function App() {
     localStorage.removeItem("chatSessionId");
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.ctrlKey && e.key === "Enter") {
       e.preventDefault();
-      sendMessage();
+      // 简单触发表单提交，让 form action 处理
+      e.currentTarget.form?.requestSubmit();
     }
   };
 
-  // Enhanced message sending with optimistic updates
-  async function sendMessage() {
-    if (!inputText.trim()) return;
+  // Form action for optimistic updates (React 19 pattern)
+  async function formAction(formData: FormData) {
+    const message = formData.get("message") as string;
+    if (!message.trim()) return;
 
+    // 乐观更新 - 立即显示用户消息
+    addOptimisticMessage(message.trim());
+
+    flushSync(() => {
+      setInputText(""); // 清空状态
+      setIsLoading(true);
+    });
+
+    await sendMessage(message.trim());
+  }
+
+  // Enhanced message sending function
+  async function sendMessage(messageText: string) {
     const userMessage: Message = {
       type: "user",
-      content: inputText.trim(),
+      content: messageText,
       id: Date.now().toString(),
       timestamp: Date.now(),
+      sending: false, // 真实消息不再是发送中状态
     };
 
-    // Optimistic update
-    addOptimisticMessage(userMessage);
-
-    setIsLoading(true);
-    const currentInput = inputText.trim();
-    setInputText("");
-
     const params: ChatParams = {
-      message: currentInput,
+      message: messageText,
       tool: selectedTool,
       session_id: sessionId,
     };
@@ -123,7 +139,7 @@ function App() {
         timestamp: Date.now(),
       };
 
-      // Update actual state
+      // Update actual state - 乐观更新会自动被替换
       setMessages((prev) => [...prev, userMessage, aiMessage]);
     } catch (error) {
       console.error("Error:", error);
@@ -140,12 +156,6 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }
-
-  // React 19 form handling with actions
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await sendMessage();
   }
 
   return (
@@ -212,22 +222,35 @@ function App() {
       </div>
 
       <div className={`${styles.messages} markdown-body`}>
-        <Suspense fallback={<LoadingSpinner />}>
+        <div style={{ fontSize: "12px", color: "#666", margin: "10px" }}>
+          Debug: messages.length={messages.length}, optimisticMessages.length=
+          {optimisticMessages.length}, isLoading={isLoading}
+        </div>
+
+        {/* 消息列表 - 直接渲染，支持乐观更新 */}
+        <div className="messages-container">
           {optimisticMessages.map((msg, index) => (
             <ChatMessage key={msg.id || index} message={msg} index={index} />
           ))}
-        </Suspense>
+        </div>
 
-        {isLoading && <LoadingSpinner />}
+        {/* 只有加载状态才用 Suspense */}
+        {isLoading && (
+          <Suspense fallback={<div>🤔 Preparing AI response...</div>}>
+            <LoadingSpinner />
+          </Suspense>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className={styles.inputArea}>
+      <form action={formAction} className={styles.inputArea}>
         <textarea
+          name="message"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={handleKeyPress}
-          placeholder="💭 Enter your message... (Ctrl + Enter to send)"
+          onKeyDown={handleKeyDown}
+          placeholder="💭 Enter your message... (Click Send button to submit)"
           className={styles.textarea}
           disabled={isLoading}
           rows={3}
